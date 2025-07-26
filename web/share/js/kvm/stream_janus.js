@@ -29,12 +29,19 @@ import {tools, $} from "../tools.js";
 var _Janus = null;
 
 
-export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeHook, __orient, __allow_audio, __allow_mic) {
+export function JanusStreamer(onActive, onInactive, onInfo, onOrganize, __orient, __allow_audio, __allow_mic, __allow_webcam) {
+	// Bind callbacks to maintain proper 'this' context
+	this.onActive = onActive.bind(this);
+	this.onInactive = onInactive.bind(this);
+	this.onInfo = onInfo.bind(this);
+	this.onOrganize = onOrganize.bind(this);
 	var self = this;
 
 	/************************************************************************/
 
 	__allow_mic = (__allow_audio && __allow_mic); // XXX: Mic only with audio
+	this.__allow_webcam = __allow_webcam || false;
+	this._webcamEnabled = false;
 
 	var __stop = false;
 	var __ensuring = false;
@@ -53,11 +60,18 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 
 	var __ice = null;
 
+
+
+	// Webcam related properties
+	this._localStream = null;
+	this._webcamEnabled = false;
+
 	/************************************************************************/
 
 	self.getOrientation = () => __orient;
 	self.isAudioAllowed = () => __allow_audio;
 	self.isMicAllowed = () => __allow_mic;
+	self.isWebcamAllowed = () => __allow_webcam;
 
 	self.getName = function() {
 		let name = "WebRTC H.264";
@@ -81,6 +95,127 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 			"view_height": el.offsetHeight,
 		};
 	};
+
+	self.enableWebcam = async function() {
+		try {
+			this._localStream = await navigator.mediaDevices.getUserMedia({
+				video: {
+					width: { ideal: 1280 },
+					height: { ideal: 720 }
+				},
+				audio: false
+			});
+			return this._localStream;
+		} catch (err) {
+			console.error('Error accessing webcam:', err);
+			throw err;
+		}
+	};
+
+	self.toggleWebcam = async function(enable = null) {
+			const shouldEnable = enable !== null ? enable : !this._webcamEnabled;
+			
+			// If no change needed, return current state
+			if (shouldEnable === this._webcamEnabled) {
+				return { success: true, enabled: this._webcamEnabled };
+			}
+
+			if (shouldEnable) {
+				await this.startWebcam();
+			} else {
+				await this.stopWebcam();
+			}
+			
+			// Only update state if operation succeeded
+			this._webcamEnabled = shouldEnable;
+			return { success: true, enabled: this._webcamEnabled };
+
+	};
+
+	self.startWebcam = async function() {
+		if (!__handle) {
+			const error = new Error("Janus handle not ready");
+			error.code = "JANUS_HANDLE_NOT_READY";
+			throw error;
+		}
+
+		try {
+			// First stop any existing stream
+			if (this._localStream) {
+				await this.stopWebcam();
+			}
+
+			// Get new stream
+			this._localStream = await this.enableWebcam();
+
+			// Add tracks if we have a valid handle and stream
+			if (__handle && this._localStream) {
+				const videoTracks = this._localStream.getVideoTracks();
+				if (videoTracks.length > 0) {
+					try {
+						videoTracks.forEach(track => {
+							__handle.addTrack(track, this._localStream);
+						});
+						console.log("Webcam started and track sent to Janus");
+					} catch (ex) {
+						console.warn("addTrack failed:", ex);
+						throw new Error("Failed to add webcam track to Janus");
+					}
+				} else {
+					throw new Error("No video tracks found in webcam stream");
+				}
+			} else {
+				throw new Error("Janus handle or local stream not available");
+			}
+		} catch (err) {
+			// Clean up on error
+			if (this._localStream) {
+				this._localStream.getTracks().forEach(track => track.stop());
+				this._localStream = null;
+			}
+			throw err; // Re-throw for caller to handle
+		}
+	};
+
+	self.stopWebcam = function() {
+		if (!this._localStream) return true;
+		
+		try {
+			// Stop all tracks first
+			this._localStream.getTracks().forEach(track => {
+				try {
+					track.stop();
+					if (__handle && typeof __handle.removeTrack === 'function') {
+						__handle.removeTrack(track);
+					}
+				} catch (err) {
+					console.warn("Error stopping/removing track:", err);
+				}
+			});
+
+			this._localStream = null;
+			console.log("Webcam stopped and tracks removed");
+			return true;
+		} catch (err) {
+			console.error("Error stopping webcam:", err);
+			return false;
+		}
+		this._webcamEnabled = false;
+		
+		// Reconfigure to recv-only if handle exists
+		if (__handle) {
+			__handle.createOffer({
+				tracks: [{type: "video", capture: false, recv: true, add: true}],
+				success: (jsep) => {
+					__handle.send({message: {request: "configure", video: false}, jsep});
+				},
+				error: (error) => {
+					console.error('Failed to create offer for recv-only:', error);
+				}
+			});
+		}
+	};
+	  
 
 	self.ensureStream = function(state) {
 		__state = state;
@@ -106,15 +241,15 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 		if (__res.width !== el.videoWidth || __res.height !== el.videoHeight) {
 			__res.width = el.videoWidth;
 			__res.height = el.videoHeight;
-			__organizeHook();
+			onOrganize();
 		}
 	};
 
 	var __ensureJanus = function(internal) {
 		if (__janus === null && !__stop && (!__ensuring || internal)) {
 			__ensuring = true;
-			__setInactive();
-			__setInfo(false, false, "");
+			self.onInactive();
+			self.onInfo(false, false, "");
 			__logInfo("Starting Janus ...");
 			__janus = new _Janus({
 				"server": tools.makeWsUrl("janus/ws"),
@@ -124,7 +259,7 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 				"success": __attachJanus,
 				"error": function(error) {
 					__logError(error);
-					__setInfo(false, false, error);
+					self.onInfo(false, false, error);
 					__finishJanus();
 				},
 			});
@@ -163,9 +298,9 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 			__handle = null;
 		}
 		__janus = null;
-		__setInactive();
+		self.onInactive();
 		if (__stop) {
-			__setInfo(false, false, "");
+			self.onInfo(false, false, "");
 		}
 	};
 
@@ -238,7 +373,7 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 
 			"error": function(error) {
 				__logError("Can't attach uStreamer: ", error);
-				__setInfo(false, false, error);
+				self.onInfo(false, false, error);
 				__destroyJanus();
 			},
 
@@ -266,20 +401,34 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 				if (msg.result) {
 					__logInfo("Got uStreamer result message:", msg.result); // starting, started, stopped
 					if (msg.result.status === "started") {
-						__setActive();
-						__setInfo(false, false, "");
+						self.onActive();
+						self.onInfo(false, false, "");
 					} else if (msg.result.status === "stopped") {
-						__setInactive();
-						__setInfo(false, false, "");
+						self.onInactive();
+						self.onInfo(false, false, "");
 					} else if (msg.result.status === "features") {
 						tools.feature.setEnabled($("stream-audio"), msg.result.features.audio);
 						tools.feature.setEnabled($("stream-mic"), msg.result.features.mic);
+						// Enable webcam switch if features include webcam support
+						const webcamEnabled = msg.result.features.webcam !== false; // Default to true if not specified
+						tools.feature.setEnabled($("stream-webcam"), true); // Always enable the switch UI
+						if (webcamEnabled) {
+							// If webcam is supported, ensure the switch reflects the current state
+							const switchEl = $("stream-webcam-switch");
+							tools.el.setEnabled(switchEl, true);
+						} else {
+							// If webcam is not supported, disable and uncheck the switch
+							const switchEl = $("stream-webcam-switch");
+							tools.el.setEnabled(switchEl, false);
+							switchEl.checked = false;
+							tools.storage.set("stream.webcam", false);
+						}
 						__ice = msg.result.features.ice;
 						__sendWatch();
 					}
 				} else if (msg.error_code || msg.error) {
 					__logError("Got uStreamer error message:", msg.error_code, "-", msg.error);
-					__setInfo(false, false, msg.error);
+					self.onInfo(false, false, msg.error);
 					if (__retry_emsg_timeout === null) {
 						__retry_emsg_timeout = setTimeout(function() {
 							if (!__stop) {
@@ -319,7 +468,7 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 
 						"error": function(error) {
 							__logInfo("Error on SDP handling:", error);
-							__setInfo(false, false, error);
+							self.onInfo(false, false, error);
 							//__destroyJanus();
 						},
 					});
@@ -328,10 +477,9 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 
 			// Janus 1.x
 			"onremotetrack": function(track, id, added, meta) {
-				// Chrome sends `muted` notifiation for tracks in `disconnected` ICE state
-				// and Janus.js just removes muted track from list of available tracks.
-				// But track still exists actually so it's safe to just ignore
-				// reason === "mute" and "unmute".
+				if (track.kind !== "video") {
+					return;
+				}
 				let reason = (meta || {}).reason;
 				__logInfo("Got onremotetrack:", id, added, reason, track, meta);
 				if (added && reason === "created") {
@@ -354,7 +502,9 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 
 	var __startInfoInterval = function() {
 		__stopInfoInterval();
-		__setActive();
+		if (self._onActive) {
+			self._onActive();
+		}
 		__updateInfo();
 		__info_interval = setInterval(__updateInfo, 1000);
 	};
@@ -380,9 +530,9 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 				// https://wiki.whatwg.org/wiki/Video_Metrics
 				let frames = null;
 				let el = $("stream-video");
-				if (el.webkitDecodedFrameCount !== undefined) {
+				if (el && el.webkitDecodedFrameCount !== undefined) {
 					frames = el.webkitDecodedFrameCount;
-				} else if (el.mozPaintedFrames !== undefined) {
+				} else if (el && el.mozPaintedFrames !== undefined) {
 					frames = el.mozPaintedFrames;
 				}
 				info = `${__handle.getBitrate()}`.replace("kbits/sec", "kbps");
@@ -391,7 +541,7 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __organizeH
 					__frames = frames;
 				}
 			}
-			__setInfo(true, __isOnline(), info);
+			self.onInfo(true, __isOnline(), info);
 		}
 	};
 

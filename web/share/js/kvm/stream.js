@@ -23,12 +23,12 @@
 "use strict";
 
 
-import {tools, $} from "../tools.js";
-import {wm} from "../wm.js";
+import { tools, $ } from "../tools.js";
+import { wm } from "../wm.js";
 
-import {JanusStreamer} from "./stream_janus.js";
-import {MediaStreamer} from "./stream_media.js";
-import {MjpegStreamer} from "./stream_mjpeg.js";
+import { JanusStreamer } from "./stream_janus.js";
+import { MediaStreamer } from "./stream_media.js";
+import { MjpegStreamer } from "./stream_mjpeg.js";
 
 
 export function Streamer() {
@@ -40,29 +40,29 @@ export function Streamer() {
 	var __streamer = null;
 
 	var __state = null;
-	var __res = {"width": 640, "height": 480};
+	var __res = { "width": 640, "height": 480 };
 
-	var __init__ = function() {
+	var __init__ = function () {
 		__streamer = new MjpegStreamer(__setActive, __setInactive, __setInfo, __organizeHook);
 
 		$("stream-led").title = "No stream from PiKVM";
 
-		tools.slider.setParams($("stream-quality-slider"), 5, 100, 5, 80, function(value) {
+		tools.slider.setParams($("stream-quality-slider"), 5, 100, 5, 80, function (value) {
 			$("stream-quality-value").innerText = `${value}%`;
 		});
 		tools.slider.setOnUpDelayed($("stream-quality-slider"), 1000, (value) => __sendParam("quality", value));
 
-		tools.slider.setParams($("stream-h264-bitrate-slider"), 25, 20000, 25, 5000, function(value) {
+		tools.slider.setParams($("stream-h264-bitrate-slider"), 25, 20000, 25, 5000, function (value) {
 			$("stream-h264-bitrate-value").innerText = value;
 		});
 		tools.slider.setOnUpDelayed($("stream-h264-bitrate-slider"), 1000, (value) => __sendParam("h264_bitrate", value));
 
-		tools.slider.setParams($("stream-h264-gop-slider"), 0, 60, 1, 30, function(value) {
+		tools.slider.setParams($("stream-h264-gop-slider"), 0, 60, 1, 30, function (value) {
 			$("stream-h264-gop-value").innerText = value;
 		});
 		tools.slider.setOnUpDelayed($("stream-h264-gop-slider"), 1000, (value) => __sendParam("h264_gop", value));
 
-		tools.slider.setParams($("stream-desired-fps-slider"), 0, 120, 1, 0, function(value) {
+		tools.slider.setParams($("stream-desired-fps-slider"), 0, 120, 1, 0, function (value) {
 			$("stream-desired-fps-value").innerText = (value === 0 ? "Unlimited" : value);
 		});
 		tools.slider.setOnUpDelayed($("stream-desired-fps-slider"), 1000, (value) => __sendParam("desired_fps", value));
@@ -74,7 +74,7 @@ export function Streamer() {
 		// Not getInt() because of radio is a string container.
 		// Also don't reset Streamer at class init.
 		tools.radio.clickValue("stream-orient-radio", tools.storage.get("stream.orient", 0));
-		tools.radio.setOnClick("stream-orient-radio", function() {
+		tools.radio.setOnClick("stream-orient-radio", function () {
 			if (["janus", "media"].includes(__streamer.getMode())) {
 				let orient = parseInt(tools.radio.getValue("stream-orient-radio"));
 				tools.storage.setInt("stream.orient", orient);
@@ -84,7 +84,7 @@ export function Streamer() {
 			}
 		}, false);
 
-		tools.slider.setParams($("stream-audio-volume-slider"), 0, 100, 1, 0, function(value) {
+		tools.slider.setParams($("stream-audio-volume-slider"), 0, 100, 1, 0, function (value) {
 			$("stream-video").muted = !value;
 			$("stream-video").volume = value / 100;
 			$("stream-audio-volume-value").innerText = value + "%";
@@ -97,13 +97,91 @@ export function Streamer() {
 			tools.el.setEnabled($("stream-mic-switch"), !!value);
 		});
 
-		tools.storage.bindSimpleSwitch($("stream-mic-switch"), "stream.mic", false, function(allow_mic) {
+		tools.storage.bindSimpleSwitch($("stream-mic-switch"), "stream.mic", false, function (allow_mic) {
 			if (__streamer.getMode() === "janus") {
 				if (__streamer.isMicAllowed() !== allow_mic) {
 					__resetStream();
 				}
 			}
 		});
+
+		// Webcam toggle with better feedback and error handling
+		tools.storage.bindSimpleSwitch($("stream-webcam-switch"), "stream.webcam", false, async function (allow_webcam) {
+			if (__streamer.getMode() !== "janus" || !__streamer.toggleWebcam) {
+				return;
+			}
+
+			const switchEl = $("stream-webcam-switch");
+			tools.el.setEnabled(switchEl, false);
+
+			try {
+				const result = await __streamer.toggleWebcam(allow_webcam);
+				
+				if (result && result.success) {
+					// Success - update UI to match the actual state
+					switchEl.checked = result.enabled;
+					tools.storage.set("stream.webcam", result.enabled);
+					tools.notify.success(`Webcam ${result.enabled ? 'enabled' : 'disabled'}`);
+				} else {
+					// Operation failed - revert the switch
+					const errorMsg = result && result.error ? result.error : 'Unknown error';
+					console.error("Webcam toggle failed:", errorMsg);
+					tools.notify.error(`Failed to toggle webcam: ${errorMsg}`);
+					switchEl.checked = !allow_webcam;
+					tools.storage.set("stream.webcam", !allow_webcam);
+				}
+			} catch (error) {
+				// Handle unexpected errors
+				console.error("Unexpected error in webcam toggle:", error);
+				tools.notify.error("Webcam toggle error: " + (error.message || "Unknown error"));
+				switchEl.checked = !allow_webcam;
+				tools.storage.set("stream.webcam", !allow_webcam);
+			} finally {
+				// Always re-enable the switch
+				tools.el.setEnabled(switchEl, true);
+			}
+		});
+
+		// Set initial webcam switch state based on storage
+		if ($("stream-webcam-switch").checked && __streamer.toggleWebcam) {
+			try {
+				__streamer.toggleWebcam(true);
+			} catch (error) {
+				console.error("Failed to initialize webcam:", error);
+				$("stream-webcam-switch").checked = false;
+				tools.storage.set("stream.webcam", false);
+			}
+		}
+
+		// Check for webcam availability
+		const checkWebcamAvailability = () => {
+			navigator.mediaDevices.enumerateDevices().then(devices => {
+				const hasWebcam = devices.some(device => device.kind === 'videoinput');
+				const switchEl = $("stream-webcam-switch");
+				
+				if (hasWebcam) {
+					// Enable the switch and restore its state from storage
+					tools.feature.setEnabled($("stream-webcam"), true);
+					tools.el.setEnabled(switchEl, true);
+					switchEl.checked = tools.storage.get("stream.webcam", false);
+				} else {
+					// No webcam found, disable and uncheck the switch
+					tools.feature.setEnabled($("stream-webcam"), false);
+					tools.el.setEnabled(switchEl, false);
+					switchEl.checked = false;
+					tools.storage.set("stream.webcam", false);
+				}
+			}).catch(error => {
+				console.warn("Could not check for webcam devices:", error);
+				tools.feature.setEnabled($("stream-webcam"), false);
+				tools.el.setEnabled($("stream-webcam-switch"), false);
+			});
+		};
+
+		// Initial webcam check - only if in Janus mode
+		if (__streamer.getMode() === "janus" && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+			checkWebcamAvailability();
+		}
 
 		tools.el.setOnClick($("stream-screenshot-button"), __clickScreenshotButton);
 		tools.el.setOnClick($("stream-reset-button"), __clickResetButton);
@@ -119,7 +197,7 @@ export function Streamer() {
 
 	/************************************************************************/
 
-	var __isStreamRequired = function() {
+	var __isStreamRequired = function () {
 		return (
 			wm.isWindowVisible($("stream-window"))
 			&& (
@@ -129,24 +207,24 @@ export function Streamer() {
 		);
 	};
 
-	var __visibilityHook = function() {
+	var __visibilityHook = function () {
 		let req = __isStreamRequired();
 		__applyState(req ? __state : null);
 	};
 
-	var __organizeHook = function() {
+	var __organizeHook = function () {
 		let geo = self.getGeometry();
 		wm.setAspectRatio($("stream-window"), geo.width, geo.height);
 	};
 
-	self.ensureDeps = function(callback) {
-		JanusStreamer.ensure_janus(function(avail) {
+	self.ensureDeps = function (callback) {
+		JanusStreamer.ensure_janus(function (avail) {
 			__janus_imported = avail;
 			callback();
 		});
 	};
 
-	self.getGeometry = function() {
+	self.getGeometry = function () {
 		// Первоначально обновление геометрии считалось через ResizeObserver.
 		// Но оно не ловило некоторые события, например в последовательности:
 		//   - Находять в HD переходим в фулскрин
@@ -168,7 +246,7 @@ export function Streamer() {
 		};
 	};
 
-	self.setState = function(state) {
+	self.setState = function (state) {
 		if (state) {
 			if (!__state) {
 				__state = {};
@@ -188,7 +266,7 @@ export function Streamer() {
 		__applyState((__isStreamRequired() && __state && __state.features) ? state : null);
 	};
 
-	var __applyState = function(state) {
+	var __applyState = function (state) {
 		if (__janus_imported === null) {
 			// XXX: This warning is triggered by visibilitychange event via the __visibilityHook()
 			// alert("__janus_imported is null, please report");
@@ -241,6 +319,10 @@ export function Streamer() {
 			if (!f.h264) {
 				tools.feature.setEnabled($("stream-audio"), false);
 				tools.feature.setEnabled($("stream-mic"), false);
+				tools.feature.setEnabled($("stream-webcam"), false);
+			} else {
+				// Webcam is only available in WebRTC (Janus) mode
+				tools.feature.setEnabled($("stream-webcam"), false);
 			}
 
 			let mode = tools.storage.get("stream.mode", "janus");
@@ -278,17 +360,17 @@ export function Streamer() {
 		}
 	};
 
-	var __setActive = function() {
+	var __setActive = function () {
 		$("stream-led").className = "led-green";
 		$("stream-led").title = "Stream is active";
 	};
 
-	var __setInactive = function() {
+	var __setInactive = function () {
 		$("stream-led").className = "led-gray";
 		$("stream-led").title = "No stream from PiKVM";
 	};
 
-	var __setControlsEnabled = function(enabled) {
+	var __setControlsEnabled = function (enabled) {
 		tools.el.setEnabled($("stream-quality-slider"), enabled);
 		tools.el.setEnabled($("stream-desired-fps-slider"), enabled);
 		tools.el.setEnabled($("stream-resolution-selector"), enabled);
@@ -296,7 +378,7 @@ export function Streamer() {
 		tools.el.setEnabled($("stream-h264-gop-slider"), enabled);
 	};
 
-	var __setInfo = function(is_active, online, text) {
+	var __setInfo = function (is_active, online, text) {
 		$("stream-box").classList.toggle("stream-box-offline", !online);
 		let el_grab = document.querySelector("#stream-window-header .window-grab");
 		let el_info = $("stream-info");
@@ -319,7 +401,7 @@ export function Streamer() {
 		el_grab.innerText = el_info.innerText = title;
 	};
 
-	var __resetStream = function(mode=null) {
+	var __resetStream = function (mode = null) {
 		if (mode === null) {
 			mode = __streamer.getMode();
 		}
@@ -328,7 +410,38 @@ export function Streamer() {
 		if (mode === "janus") {
 			let allow_audio = !$("stream-video").muted;
 			let allow_mic = $("stream-mic-switch").checked;
-			__streamer = new JanusStreamer(__setActive, __setInactive, __setInfo, __organizeHook, orient, allow_audio, allow_mic);
+			let allow_webcam = $("stream-webcam-switch")?.checked;
+
+
+			tools.el.setEnabled($("stream-mic-switch"), true);
+			__streamer = new JanusStreamer(
+				__setActive,
+				__setInactive,
+				__setInfo,
+				__organizeHook,
+				orient,
+				allow_audio,
+				allow_mic,
+				allow_webcam
+			);
+
+			if (__streamer.toggleWebcam) {
+				// Only toggle if state changed
+				const currentWebcamState = __streamer.isWebcamEnabled ? __streamer.isWebcamEnabled() : false;
+				if (currentWebcamState !== allow_webcam) {
+					try {
+						__streamer.toggleWebcam(allow_webcam);
+					} catch (error) {
+						console.error("Failed to toggle webcam:", error);
+						tools.notify.error("Failed to access webcam: " + (error.message || "Unknown error"));
+						// Revert UI state on error
+						$("stream-webcam-switch").checked = !allow_webcam;
+						tools.storage.set("stream.webcam", !allow_webcam);
+					}
+				}
+				// Only enable webcam in WebRTC (Janus) mode
+				tools.feature.setEnabled($("stream-webcam"), true);
+			}
 			// Firefox doesn't support RTP orientation:
 			//  - https://bugzilla.mozilla.org/show_bug.cgi?id=1316448
 			tools.feature.setEnabled($("stream-orient"), !tools.browser.is_firefox);
@@ -342,13 +455,14 @@ export function Streamer() {
 			}
 			tools.feature.setEnabled($("stream-audio"), false); // Enabling in stream_janus.js
 			tools.feature.setEnabled($("stream-mic"), false); // Ditto
+			tools.feature.setEnabled($("stream-webcam"), false); // Ditto
 		}
 		if (__isStreamRequired()) {
 			__streamer.ensureStream((__state && __state.streamer !== undefined) ? __state.streamer : null);
 		}
 	};
 
-	var __clickModeRadio = function() {
+	var __clickModeRadio = function () {
 		let mode = tools.radio.getValue("stream-mode-radio");
 		tools.storage.set("stream.mode", mode);
 		if (mode !== __streamer.getMode()) {
@@ -359,15 +473,15 @@ export function Streamer() {
 		}
 	};
 
-	var __clickScreenshotButton = function() {
+	var __clickScreenshotButton = function () {
 		tools.windowOpen("api/streamer/snapshot");
 	};
 
-	var __clickResetButton = function() {
-		wm.confirm("Are you sure you want to reset the stream?").then(function(ok) {
+	var __clickResetButton = function () {
+		wm.confirm("Are you sure you want to reset the stream?").then(function (ok) {
 			if (ok) {
 				__resetStream();
-				tools.httpPost("api/streamer/reset", null, function(http) {
+				tools.httpPost("api/streamer/reset", null, function (http) {
 					if (http.status !== 200) {
 						wm.error("Can't reset stream", http.responseText);
 					}
@@ -376,8 +490,8 @@ export function Streamer() {
 		});
 	};
 
-	var __sendParam = function(name, value) {
-		tools.httpPost("api/streamer/set_params", {[name]: value}, function(http) {
+	var __sendParam = function (name, value) {
+		tools.httpPost("api/streamer/set_params", { [name]: value }, function (http) {
 			if (http.status !== 200) {
 				wm.error("Can't configure stream", http.responseText);
 			}

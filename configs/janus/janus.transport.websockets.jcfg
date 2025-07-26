@@ -1,4 +1,6 @@
 general: {
-	ws = true
-	ws_unix = "/run/kvmd/janus-ws.sock"
-}
+    ws        = true;
+    ws_unix   = "/run/kvmd/janus-ws.sock";
+    ws_port   = 8188;
+    ws_interface = "0.0.0.0";
+};

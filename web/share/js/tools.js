@@ -80,7 +80,10 @@ export var tools = new function() {
 
 	self.makeWsUrl = function(url) {
 		let proto = (self.is_https ? "wss://" : "ws://");
-		return proto + window.location.host + window.location.pathname + ROOT_PREFIX + url;
+		let base = window.location.host;
+		let path = window.location.pathname.replace(/\/+$/, '');
+		let prefix = ROOT_PREFIX.replace(/^\/+|\/+$/g, '');
+		return `${proto}${base}${path ? '/' + path : ''}/${prefix}/${url.replace(/^\/+/, '')}`;
 	};
 
 	/************************************************************************/

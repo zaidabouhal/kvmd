@@ -1,18 +1,56 @@
 general: {
-	debug_level = 4
-}
+  configs_folder  = "/etc/janus/conf.d";   # secondary *.jcfg files (optional)
+  plugins_folder  = "/usr/lib/janus/plugins";
+  debug_level     = 4;
+};
+
 nat: {
-	nice_debug = false
-	ignore_mdns = true
-}
+  stun_server = "stun.l.google.com";
+  stun_port   = 19302;
+  ignore_mdns = true;
+};
+
 media: {
-	ipv6 = true
-	ipv6_linklocal = true
-	min_nack_queue = 2000
-	rtp_port_range = "20000-40000"
-	no_media_timer = 0
-	slowlink_threshold = 10
-	twcc_period = 100
-	dtls_timeout = 1000
-	nack_optimizations = true
-}
+  rtp_port_range = "20000-40000";
+  ipv6           = true;
+  ipv6_linklocal = true;
+};
+
+plugins: {
+  # ---- PiKVM video source (uStreamer) ----
+  "janus.plugin.ustreamer": {
+    debug_level  = 4;
+    accept_h264  = true;
+    accept_vp8   = false;        # omit if you want VP8 fallback
+  };
+
+  # ---- Optional outbound webcam (browser -> PiKVM) ----
+  "janus.plugin.webcam2pikvm": {
+    debug_level  = 4;
+    accept_vp8   = true;
+    accept_h264  = true;
+  };
+};
+
+transports: {
+  "janus.transport.websockets": {
+    ws           = true;
+    ws_port      = 8188;
+    ws_interface = "0.0.0.0";
+    wss          = false;        # change to true + certs for TLS
+  };
+};
+
+webserver: {
+  enabled = true;
+  http    = true;
+  port    = 8088;
+  https   = false;
+};
+
+websockets: {
+  enabled  = true;
+  ws       = true;
+  ws_port  = 8188;
+  wss      = false;
+};

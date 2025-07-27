@@ -1,0 +1,13 @@
+[Unit]
+Description=PiKVM - Webcam Setup
+After=kvmd-otg.service
+Before=kvmd-janus.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/kvmd-webcam start
+ExecStop=/usr/bin/kvmd-webcam stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

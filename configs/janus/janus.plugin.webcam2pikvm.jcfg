@@ -1,0 +1,28 @@
+webcam2pikvm: {
+    debug_level = 4;
+    accept_vp8 = true;
+    accept_h264 = true;
+
+    video: {
+        # Output device for the webcam stream (UVC gadget)
+        device = "/dev/video10";
+        
+        # Video format and resolution
+        format = "yuyv422";
+        width = 1280;
+        height = 720;
+        fps = 30;
+        
+        # Input buffer size (adjust based on your needs)
+        buffer_size = "2M";
+    };
+
+    # Optional: Audio configuration if needed
+    audio: {
+        enabled = false;  # Set to true if you want to capture audio too
+        device = "plughw:UAC2Gadget,0";
+        format = "s16le";
+        rate = 48000;
+        channels = 2;
+    };
+};

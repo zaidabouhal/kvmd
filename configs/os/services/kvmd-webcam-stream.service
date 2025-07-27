@@ -1,0 +1,14 @@
+[Unit]
+Description=PiKVM - Webcam Stream Routing
+After=kvmd-webcam.service
+Before=kvmd-janus.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kvmd-webcam-stream start
+ExecStop=/usr/bin/kvmd-webcam-stream stop
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

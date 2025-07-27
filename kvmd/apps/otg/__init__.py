@@ -112,6 +112,64 @@ class _GadgetConfig:
         self.__msd_instance = 0
         _mkdir(meta_path)
 
+def add_uvc_webcam(self, start: bool, width: int=1280, height: int=720, fps: int=30) -> None:
+    """Add UVC webcam function to the gadget.
+    
+    Args:
+        start: Whether to start the function immediately
+        width: Video width in pixels
+        height: Video height in pixels
+        fps: Frames per second
+    """
+    eps = 3  # UVC typically uses 3 endpoints: control, streaming, and interrupt
+    func = "uvc.usb0"
+    func_path = self.__create_function(func)
+    
+    # Create required UVC directories
+    _mkdir(join(func_path, "class/fs"))
+    _mkdir(join(func_path, "class/hs"))
+    _mkdir(join(func_path, "class/ss"))
+    
+    # Set streaming parameters
+    streaming = join(func_path, "streaming")
+    _mkdir(streaming)
+    
+    # Create uncompressed format (YUYV)
+    uncompressed = join(streaming, "uncompressed/u")
+    _mkdir(uncompressed)
+    _write(join(uncompressed, "bBitsPerPixel"), "16")
+    _write(join(uncompressed, "bDefaultFrameIndex"), "1")
+    _write(join(uncompressed, "bAspectRatioX"), "0")
+    _write(join(uncompressed, "bAspectRatioY"), "0")
+    _write(join(uncompressed, "bmInterfaceFlags"), "0")
+    _write(join(uncompressed, "bCopyProtect"), "0")
+    
+    # Set frame format
+    frame = join(uncompressed, "frames/640x480")
+    _mkdir(frame)
+    _write(join(frame, "wWidth"), str(width))
+    _write(join(frame, "wHeight"), str(height))
+    _write(join(frame, "dwMinBitRate"), str(width * height * 16 * fps))
+    _write(join(frame, "dwMaxBitRate"), str(width * height * 16 * fps))
+    _write(join(frame, "dwMaxVideoFrameBufferSize"), str(width * height * 2))
+    _write(join(frame, "dwDefaultFrameInterval"), str(1000000 // fps))
+    
+    # Create header with format and frame descriptors
+    _write(join(streaming, "header/h"), "UVC 1.5")
+    _write(join(streaming, "header/mjpeg/h"), "MJPEG")
+    _write(join(streaming, "header/mjpeg/1"), "1280x720 30.0")
+    _write(join(streaming, "header/mjpeg/2"), "640x480 30.0")
+    _write(join(streaming, "header/mjpeg/3"), "320x240 30.0")
+    
+    # Enable streaming
+    _symlink("uncompressed/u", join(streaming, "class/fs"))
+    _symlink("uncompressed/u", join(streaming, "class/hs"))
+    _symlink("uncompressed/u", join(streaming, "class/ss"))
+    
+    if start:
+        self.__start_function(func, eps)
+    self.__create_meta(func, "UVC Webcam", eps)
+
     def add_audio_mic(self, start: bool) -> None:
         eps = 2
         func = "uac2.usb0"
@@ -337,6 +395,10 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
     if cod.audio.enabled:
         logger.info("===== Microphone =====")
         gc.add_audio_mic(cod.audio.start)
+
+    if cod.webcam.enabled:
+        logger.info("===== Webcam =====")
+        gc.add_uvc_webcam(start=True, width=1280, height=720, fps=30)
 
     logger.info("===== Preparing complete =====")
 

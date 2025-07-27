@@ -5,6 +5,7 @@ ustreamer: {
 
     video: {
         sink = "kvmd::ustreamer::h264";
+        
     };
 
     acap: {

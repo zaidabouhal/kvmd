@@ -2,7 +2,6 @@
 /src/
 /site/
 /build/
-/dist/
 /kvmd.egg-info/
 /config.mk
 /testenv/.tox/
